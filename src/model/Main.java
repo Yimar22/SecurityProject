@@ -1,7 +1,9 @@
 package model;
 
+import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.IOException;
@@ -42,6 +44,7 @@ public class Main {
 	public static void main(String[] args) throws Exception {
 		Scanner sc = new Scanner(System.in);
 		char[] pass;
+		
 		System.out.println("Options:");
 		System.out.println("[1] Generate new private and public keys (Warning: current keys will be deleted)");
 		System.out.println("[2] Sign a file");
@@ -92,32 +95,28 @@ public class Main {
 		sc.close();
 	}
 
-	private static boolean verifyFile(String fileToCheck) throws NoSuchAlgorithmException, InvalidKeySpecException, SignatureException, InvalidKeyException {
+	private static boolean verifyFile(String fileToCheck) throws NoSuchAlgorithmException, InvalidKeySpecException, SignatureException, InvalidKeyException, IOException {
 		boolean res =false;
 			String fileToCheckSig = fileToCheck+".sig";
 			PublicKey pk = readPublicKey(new File("id_rsa.pub"));
-			Signature sig = Signature.getInstance("SHA1withDSA");
+			Signature sig = Signature.getInstance("SHA1withRSA");
 			sig.initVerify(pk);
-			byte[] sigFile = new byte[1024];
-			byte[] buffer = new byte[1024];
-
 			
-			try(FileInputStream fis = new FileInputStream(new File(fileToCheckSig))){
-			   sigFile=fis.readAllBytes();
-			} catch (IOException e){
-			    e.printStackTrace();
-			}
-
-			try(FileInputStream fis = new FileInputStream(fileToCheck)){
-			    int bytesRead = fis.read(buffer);
-			    while(fis.available() != 0){
-			        if(bytesRead>0) sig.update(buffer, 0, bytesRead);
-			    }
-			} catch (IOException e){
-			    e.printStackTrace();
-			}
-		
-			sig.update(buffer);
+			FileInputStream sigfis = new FileInputStream(fileToCheckSig);
+			byte[] sigFile = new byte[sigfis.available()];
+			sigfis.read(sigFile);
+			sigfis.close();
+			
+			FileInputStream datafis = new FileInputStream(fileToCheck);
+			BufferedInputStream bufin = new BufferedInputStream(datafis);
+			byte[] buffer = new byte[1024];
+			int len;
+			while (bufin.available() != 0) {
+			    len = bufin.read(buffer);
+			    sig.update(buffer, 0, len);
+			};
+			bufin.close();
+			
 		return sig.verify(sigFile);
 	}
 
@@ -129,34 +128,33 @@ public class Main {
 		    e.printStackTrace();
 		}
 		
-		KeyFactory keyFactory = KeyFactory.getInstance("DSA");
+		KeyFactory keyFactory = KeyFactory.getInstance("RSA");
 		
 		X509EncodedKeySpec keySpec = new X509EncodedKeySpec(output);
 		return keyFactory.generatePublic(keySpec);
 	}
 
 	private static void signFile(String fileToSign, PrivateKey pk) throws InvalidKeyException, NoSuchAlgorithmException, SignatureException, IOException {
-		Signature sig = Signature.getInstance("SHA1WithDSA");
+		Signature sig = Signature.getInstance("SHA1WithRSA");
 		sig.initSign(pk);
-		try(FileInputStream inputStream = new FileInputStream(fileToSign)){
-			byte[] buffer = new byte[64];
-			int bytesRead;
-			while ((bytesRead=inputStream.read(buffer)) != -1) 
-				if (bytesRead>0) sig.update(buffer, 0, bytesRead);
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
-		byte[] output = sig.sign();
-		try (FileOutputStream out = new FileOutputStream(fileToSign+".sig")) {
-			out.write(output);
-			out.flush();
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
+		FileInputStream fis = new FileInputStream(fileToSign);
+		BufferedInputStream bufin = new BufferedInputStream(fis);
+		byte[] buffer = new byte[1024];
+		int len;
+		while ((len = bufin.read(buffer)) >= 0) {
+		    sig.update(buffer, 0, len);
+		};
+		bufin.close();
+		
+		byte[] realSig = sig.sign();
+		
+		FileOutputStream sigfos = new FileOutputStream(fileToSign+".sig");
+		sigfos.write(realSig);
+		sigfos.close();
 	}
 
 	public static PrivateKey readPrivateKey(byte[] input) throws Exception {
-		KeyFactory keyFactory = KeyFactory.getInstance("DSA");
+		KeyFactory keyFactory = KeyFactory.getInstance("RSA");
 		PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(input);
 		return keyFactory.generatePrivate(keySpec);
 	}
@@ -164,7 +162,7 @@ public class Main {
 	private static void generateKeys(char[] pass) {
 		KeyPairGenerator keyPairGenerator = null;
 		try {
-			keyPairGenerator = KeyPairGenerator.getInstance("DSA");
+			keyPairGenerator = KeyPairGenerator.getInstance("RSA");
 		} catch (NoSuchAlgorithmException e) {
 
 			e.printStackTrace();
@@ -242,13 +240,13 @@ public class Main {
 	}
 
 	public static byte[] hash(byte[] input) throws IOException, NoSuchAlgorithmException {
-		MessageDigest digest = MessageDigest.getInstance("SHA256");
+		MessageDigest digest = MessageDigest.getInstance("SHA-1");
 		digest.update(input);
 		return digest.digest();
 	}
 	
 	public static byte[] hash(File file) throws IOException, NoSuchAlgorithmException {
-		MessageDigest digest = MessageDigest.getInstance("SHA256");
+		MessageDigest digest = MessageDigest.getInstance("SHA-1");
 		try(FileInputStream fis = new FileInputStream(file)){
 			byte[] buffer = new byte[8192];
 			int bytesRead;
@@ -262,7 +260,7 @@ public class Main {
 		}
 	}
 
-	public static byte[] decrypt(SecretKey key, File inputFile/*, File outputFile*/) throws NoSuchAlgorithmException, NoSuchPaddingException, IllegalBlockSizeException, BadPaddingException {
+	public static byte[] decrypt(SecretKey key, File inputFile) throws NoSuchAlgorithmException, NoSuchPaddingException, IllegalBlockSizeException, BadPaddingException {
 
 		Cipher cipher = Cipher.getInstance(ALGORITHM);
 		byte[] output = null;
